@@ -18,17 +18,16 @@ class RemoveKeywordCollisions(keywords: Set[String]) extends ManipulateNames {
 
   private val inlineDelim = "_"
 
-  /** Match any strings in the keywords set */
-  override def condition = keywords(_)
-
   /** Generate a new name, by appending underscores, that will not conflict with the existing namespace
     * @param n a name
     * @param ns a [[Namespace]]
-    * @return a conflict-free name
+    * @return Some name if a rename occurred, None otherwise
     * @note prefix uniqueness is not respected
     */
-  override def manipulate = (n: String, ns: Namespace) =>
-    Uniquify.findValidPrefix(n + inlineDelim, Seq(""), ns.cloneUnderlying ++ keywords)
+  override def manipulate = (n: String, ns: Namespace) => keywords.contains(n) match {
+    case true  => Some(Uniquify.findValidPrefix(n + inlineDelim, Seq(""), ns.cloneUnderlying ++ keywords))
+    case false => None
+  }
 
 }
 
