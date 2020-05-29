@@ -248,21 +248,50 @@ abstract class ManipulateNames[A <: ManipulateNames[_] : ClassTag] extends Trans
     * @param skips a set of targets that should not be manipulated
     * @return the circuit with manipulated names
     */
-  def run(c: ir.Circuit, renames: RenameMap = RenameMap(), skips: Set[Target] = Set.empty): ir.Circuit = {
-    implicit val r = new RenameDataStructure(c, renames, skips)
+  def run(c: ir.Circuit, renames: RenameMap = RenameMap(), skips: Set[Target] = Set.empty): ir.Circuit =
+{
     implicit val t = CircuitTarget(c.main)
 
-    val cx = c.map(doRename)
-
-    /* Rename all modules from leafs to root in one pass while updating a shared rename map. Going from leafs to roots
-     * ensures that the rename map is safe for parents to blindly consult.
+    /* If the circuit is a skip, return the original circuit. Otherwise, walk all the modules and rename them. Rename the
+     * circuit if the main module was renamed.
      */
-    val modulesx: Map[ModuleTarget, ir.DefModule] = new InstanceGraph(cx).moduleOrder.reverse
-      .map(m => t.module(m.name) -> onModule(m))
-      .toMap
+    skips.contains(t) match {
+      case true =>
+        logger.info(s"Circuit '${t.serialize}' in skip list. No renaming will occur.")
+        c
+      case false =>
+        implicit val r = new RenameDataStructure(c, renames, skips)
 
-    /* Replace the old modules making sure that they are still in the same order */
-    cx.copy(modules = c.modules.map(m => modulesx(t.module(m.name))))
+        /* Record a rename for the circuit if the top module will be renamed. This allows all the module renames to be
+         * aware of the circuit rename when generating their own renames. E.g., this allows renames to be generated
+         * that can be resolved in a single step:
+         *   ~foo -> FOO
+         *   ~foo|bar -> ~FOO|BAR
+         * Instead of renames which require multiple steps:
+         *   ~foo -> FOO
+         *   ~foo|bar -> ~foo|BAR
+         */
+        val mainx = skips.contains(t.module(c.main)) match {
+          case true => c.main
+          case false =>
+            val tx = CircuitTarget(doRename(c.main))
+            logger.info(s"Main module will be renamed. Renaming circuit: '${t.serialize}' -> ['${tx.serialize}']")
+            renames.record(t, tx)
+            tx.circuit
+        }
+
+        /* Rename all modules from leafs to root in one pass while updating a shared rename map. Going from leafs to
+         * roots ensures that the rename map is safe for parents to blindly consult. Store this in mapping of old module
+         * target to new module to allow the modules to be put in the old order.
+         */
+        val modulesx: Map[ModuleTarget, ir.DefModule] = new InstanceGraph(c).moduleOrder.reverse
+          .map(m => t.module(m.name) -> onModule(m))
+          .toMap
+
+        /* Replace the old modules making sure that they are still in the same order */
+        c.copy(modules = c.modules.map(m => modulesx(t.module(m.name))),
+               main = mainx)
+    }
   }
 
   /** Return a circuit state with all sensitive names manipulated */
@@ -273,8 +302,7 @@ abstract class ManipulateNames[A <: ManipulateNames[_] : ClassTag] extends Trans
     }.flatten.flatten.toSet
 
     val renames = RenameMap()
-    val statex = state.copy(circuit = run(state.circuit, renames, skips), renames = Some(renames))
-    statex
+    state.copy(circuit = run(state.circuit, renames, skips), renames = Some(renames))
   }
 
 }
