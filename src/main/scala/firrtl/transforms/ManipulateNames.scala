@@ -28,15 +28,29 @@ import scala.reflect.ClassTag
 
 /** Annotation that indicates that a specific child-transform of [[ManipulateNames]] should ignore specific
   * [[firrtl.annotations.Target Target]]s.
+  *
+  * All targets must be local. This is because preventing renaming in a specific instance will not be preserved across
+  * deduplication. If you want this behavior, you should be preventing deduplication in that instance.
   * @param targets the FIRRTL IR targets that should not be renamed
   * @param transform the transform that this should apply to
   * @tparam A a sub-type of [[ManipulateNames]]
+  * @throws java.lang.IllegalArgumentException if any non-local targets are given
   */
 case class ManipulateNamesSkipsAnnotation[A <: ManipulateNames[_]](
   targets: Seq[Seq[Target]],
   transform: Dependency[A]) extends MultiTargetAnnotation {
 
   override def duplicate(a: Seq[Seq[Target]]) = this.copy(targets=a)
+
+  /* Throw an exception if targets are non-local */
+  targets.flatten.collect {
+    case a if !a.isLocal => a
+  } match {
+    case Nil =>
+    case a =>
+      val aString = a.map(_.serialize).mkString("\n    - ", "\n    - ", "")
+      throw new IllegalArgumentException(s"""'${this.getClass.getName}' given non-local targets: $aString""")
+  }
 
 }
 

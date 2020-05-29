@@ -27,9 +27,10 @@ class ManipulateNamesSpec extends AnyFlatSpec with Matchers {
     protected val input =
       """|circuit Foo:
          |  module Bar:
-         |    skip
+         |    node a = UInt<1>(0)
          |  module Foo:
-         |    skip
+         |    inst bar of Bar
+         |    inst bar2 of Bar
          |""".stripMargin
     val tm = new firrtl.stage.transforms.Compiler(Seq(Dependency[AddPrefix]))
   }
@@ -51,7 +52,7 @@ class ManipulateNamesSpec extends AnyFlatSpec with Matchers {
     val annotations = Seq(ManipulateNamesSkipsAnnotation(Seq(Seq(CircuitTarget("Foo"))), Dependency[AddPrefix]))
     val state = CircuitState(Parser.parse(input), annotations)
     val statex = tm.execute(state)
-    state.circuit should be (statex.circuit)
+    state.circuit.serialize should be (statex.circuit.serialize)
   }
 
   it should "not rename the circuit if the top module is skipped" in new CircuitFixture {
@@ -65,6 +66,27 @@ class ManipulateNamesSpec extends AnyFlatSpec with Matchers {
     )
     val statex = tm.execute(state)
     expected.foreach(statex should containTree (_))
+  }
+
+  it should "not rename InstanceTarget skips" in new CircuitFixture {
+    val bar = CircuitTarget("Foo").module("Foo").instOf("bar", "Bar")
+    val annotations = Seq(ManipulateNamesSkipsAnnotation(Seq(Seq(bar)), Dependency[AddPrefix]))
+    val state = CircuitState(Parser.parse(input), annotations)
+    val expected: Seq[PartialFunction[Any, Boolean]] = Seq(
+      { case ir.DefInstance(_, "bar", "prefix_Bar", _) => true},
+      { case ir.Module(_, "prefix_Bar", _, _) => true}
+    )
+    val statex = tm.execute(state)
+    expected.foreach(statex should containTree (_))
+  }
+
+  behavior of "ManipulateNamesSkipsAnnotation"
+
+  it should "throw an exception if a non-local target is skipped" in new CircuitFixture {
+    val barA = CircuitTarget("Foo").module("Foo").instOf("bar", "Bar").ref("a")
+    assertThrows[java.lang.IllegalArgumentException]{
+      Seq(ManipulateNamesSkipsAnnotation(Seq(Seq(barA)), Dependency[AddPrefix]))
+    }
   }
 
 }
